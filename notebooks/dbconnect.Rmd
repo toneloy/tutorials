@@ -1,0 +1,89 @@
+---
+title: "Conectarse a Bases de Datos"
+output:
+  html_document:
+    df_print: paged
+---
+
+
+### Paquetes necesarios
+La ventaja de usar los paquetes `dplyr` y `dbplyr` es que nos van a permitir usar el mismo código que si tuviésemos un `data.frame` commún y corriente.
+
+```{r, eval=FALSE}
+library(dplyr)
+library(dbplyr)
+library(RPostgres)
+```
+
+**Nota:** Para conectarse a bases de datos alojadas en Heroku es importante utilizar el paquete `Rpostgres` en lugar del paquete `RPostgreSQL`. Las bases de datos almacenadas en Heroku requieren utilizar un protocolo SSL, y esto no ha sido implementado en el paquete `RPostgreSQL`.
+
+
+### Pasos para la conexión:
+
+#### Crear objeto de la conexión
+Como convención, el objeto de la conexión se suele nombrar `conn` por *connection*. Se usan los siguientes argumentos:
+
+1. `drv`: Driver de la conexión. En el caso de una base de datos Postgres, se usa `Postgres()`
+2. `dbname`: Nombre de la base de datos
+3. `user`: Nombre de usuario
+4. `password`: Contraseña
+5. `host`: Dirección donde está alojada la base de datos. Puede ser una dirección IP, una URL o `'localhost'` en el caso de ser una base de datos local
+6. `posrt`: Puerto de conexión de la base de datos. Usualmente en el caso de Postgres es 5432. Debe ser un valor numérico, no una cadena de caracteres (no va entre comillas)
+
+Sólo el `drv` puede ser un argumento posicional. Todos los demás deben ser argumentos nombrados.
+
+```{r, eval=FALSE}
+conn <- dbConnect(Postgres(),
+                  dbname = '<dbname>',
+                  user = '<user>',
+                  password = '<password>',
+                  host = '<host>',
+                  port = <port>)
+```
+
+**Nota:** Usualmente en programación, cuando se coloca algo entre `<>` en una documentación, significa que se debe cambiar ese algo por el valor real. De esta forma, si nuestra base de datos se llama `data_warehouse`, el argumento quedaría como `dbname = 'data_warehouse'`. Nótese que también se eliminaron los `<>`.
+
+#### Crear objeto de tabla
+
+Debido a que en ocasiones las tablas en una base de datos contienen más datos de los que podemos manejar en la memoria RAM de nuestra computadora personal, en lugar de descargar toda la data es preferible usar la potencia de cálculo del manejador de bases de datos y descargar los datos que realmente necesitemos tener localmente. Por eso, creamos un punto de conexión con la tabla en la base de datos. Lo interesante de `dplyr` es que nos va a permitir usar funciones como `select`, `filter` o `summarise` con este punto de conexión como si fuese un `data.frame` de siempre.
+
+```{r, eval=FALSE}
+my_table <- conn %>% tbl('my_table')
+```
+
+Usamos la función `tbl` con la conexión a la base de datos y el nombre de la tabla. También se puede usar una consulta sql usando la función `sql`. Por ejemplo, con la misma tabla `my_table` podríamos hacer algo como esto:
+
+```{r, eval=FALSE}
+my_query <- conn %>% tbl(sql('select * from my_table where column_1 = 1'))
+```
+
+Si la tabla que queremos consultar está en un esquema distinto a `public`, tendremos que usar la función `in_schema` para especificar el esquema en el que está.
+```{r, eval=FALSE}
+my_table <- conn %>% tbl(in_schema('my_schema', 'my_table'))
+```
+
+#### Usar `dplyr` para hacer consultas
+
+`dplyr` se encarga de traducir el código en R a SQL. De esta manera, el trabajo se hace en el servidor y sólo descargamos el resultado final.
+
+```{r, eval=FALSE}
+my_query <- my_table %>% 
+  select(column_1, column_3) %>% 
+  filter(column_3 > 5) %>% 
+  group_by(column_1) %>% 
+  summarise(column_3_sum = sum(column_3))
+```
+
+Si necesitamos tener los datos como un `data.frame`, usamos la función `collect` para descargar el resultado de nuestra consulta.
+
+```{r, eval=FALSE}
+my_query_local <- my_table %>% 
+  select(column_1, column_3) %>% 
+  filter(column_3 > 5) %>% 
+  group_by(column_1) %>% 
+  summarise(column_3_sum = sum(column_3)) %>% 
+  collect()
+```
+
+Como ejemplo, es necesario usar `collect` si queremos guardar la data en un archivo CSV o si necesitamos aplicar funciones del paquete `tidyr` como `spread` o `gather` para calcular tablas de doble entrada.
+
