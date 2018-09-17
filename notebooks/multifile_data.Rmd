@@ -1,13 +1,36 @@
 ---
 title: "Leer varios archivos de una carpeta"
-output:
-  html_document:
-    df_print: paged
+output: html_document
 ---
+
+Para los que vienen sólo a copiar y pegar ¡adelante! necesitas tener instalados estos paquetes:
+
+- `dplyr`
+- `purrr`
+- `readr`
+- `tidyr`
+
+La función `read_csv_folder` puede leer archivos csv en carpetas anidadas (carpetas dentro de carpetas, dentro de carpetas...). En la mayoría de los casos, con un simple`read_csv_folder('<folder>')` bastará para leer los archivos.
+
+```{r, warning=FALSE, message=FALSE}
+read_csv_folder <- function(.folder = '.', pattern = '\\.csv$', .add_file_column = TRUE, full.names = TRUE, recursive = TRUE, ...) {
+  files <- list.dirs(.folder, full.names = full.names, recursive = recursive) %>% 
+    purrr::map(list.files, pattern = pattern, full.names = full.names, ...) %>% 
+    purrr::flatten_chr()
+  
+  df <- dplyr::data_frame(file = files) %>% 
+    dplyr::mutate(sales = purrr::map(file, readr::read_csv)) %>% 
+    tidyr::unnest(sales)
+  
+  return(df)
+}
+```
+
+Si quieres saber cómo llegamos a esa función, sigue leyendo.
 
 Si tenemos múltiples archivos de datos en una carpeta, todos con las mismas columnas, podemos leerlos todos y unir la data. En algunos casos, nos interesará obtener información del propio nombre del archivo.
 
-## Versión sin problemas - Estructura de carpetas simple
+## Estructura de carpetas simple
 
 Los pasos son:
 
@@ -36,7 +59,7 @@ files
 
 ### Método incorrecto
 
-Lo incorrecto de esta forma es el uso del `for`. Este error lo cometen usualmente las personas que aprendieron a programar con otro lenguaje. El problema es que los bucles `for` en R no son nada eficientes
+En R, casi siempre que usas `for` estás trabajando de la peor forma. Este error lo cometen usualmente las personas que aprendieron a programar con otro lenguaje. El problema es que los bucles `for` en R no son nada eficientes.
 
 ```{r}
 # Paso 2
@@ -49,15 +72,20 @@ for(file in files) {
 }
 
 # Paso 3
-sales <- do.call(rbind, sales_list)
+sales <- data.frame()
+for(store_sales in sales_list) {
+  sales <- rbind(sales, store_sales)  
+}
 
 head(sales)
 ```
 
-**Nota:** La manera **súper incorrecta** sería hacer usar `for(i in 1:length(files))` y luego usar `files[i]`.
+Es recomendable usar el argumento `as.is = TRUE` o `stringsAsFactors = FALSE` en `read.csv` para evitar problemas con las variables categóricas o de texto. Esto evita que tengas columnas con tipo de dato `factor`. Aunque tiene su uso, el tipo de dato `factor` puede ser problemático, así que no es recomendable a menos de que estés muy seguro de que es lo mejor.
+
+**Nota:** La manera **súper incorrecta** sería hacer usar `for(i in 1:length(files))` y luego usar `files[i]`. Una muy mala señal es que estés usando `[]` o `[[]]` para acceder a algún dato. Si ves eso en tu código, verifica que sea absolutamente necesario.
 
 ### Método tradicional
-En lugar de usar `for`, vamos a usar `lapply`. El valor que retorna `lapply` es una lista, resultado de aplicar una función a cada elemento de un vector o lista.
+En lugar de usar `for`, vamos a usar `lapply`. El valor que retorna `lapply` es una lista, resultado de aplicar una función a cada elemento de un vector o lista. La función `lapply` está muy relacionada con la *programación funcional*.
 
 #![lapply diagram](../img/lapply_diagram.png)
 
@@ -75,8 +103,53 @@ sales <- do.call(rbind, sales_list)
 head(sales)
 ```
 
+Lo que ganamos con este método es simplicidad en el código y un poco de velocidad. Veamos la comparación en tiempo de ejecución:
+
+```{r}
+cat('Método 1\n')
+method_1_time <- system.time({
+  replicate(100, {
+    # Paso 2
+    sales_list <- list()
+
+    for(file in files) {
+      store_sales <- read.csv(file, as.is = TRUE)
+      store_sales$file <- file
+      sales_list <- c(sales_list, list(store_sales))
+    }
+    
+    # Paso 3
+    sales <- data.frame()
+    for(store_sales in sales_list) {
+      sales <- rbind(sales, store_sales)  
+    }
+  })
+})
+cat(method_1_time)
+
+cat('\n')
+cat('Método 2\n')
+method_2_time <- system.time({
+  replicate(100, {
+    # Paso 2
+    sales_list <- lapply(files, function(file) {
+      store_sales <- read.csv(file, as.is = TRUE)
+      store_sales$file <- file
+      store_sales
+    })
+    
+    # Paso 3
+    sales <- do.call(rbind, sales_list)
+  })
+})
+cat(method_1_time)
+
+```
+
+Hubo una reducción promedio de tiempo del `r sprintf('%.2f%%', abs(method_2_time[3]/method_1_time[3] - 1)*100)`.
+
 ### Método moderno básico
-En este método la diferencia es utilizamos algunos paquetes del `tidyverse`:
+En este método la diferencia es que utilizamos algunos paquetes del `tidyverse`:
 
 1. Usamos `readr::read_csv` en lugar de `read.csv` con `as.is = TRUE`
 2. Usamos `dplyr::mutate` en lugar de `sales$file <- file`
@@ -149,7 +222,7 @@ sales <- map_df(files, read_csv)
 sales
 ```
 
-## Versión sin problemas - Estructura de carpetas anidadas
+## Estructura de carpetas anidadas
 Ya que aprendimos a hacer esto como los profesionales, vamos a usar sólo ese método. En este caso, lo que cambiará es el paso de obtener la lista de direcciones de los archivos.
 
 ```{r}
@@ -160,6 +233,8 @@ files_list <- map(folders, list.files, pattern = '\\.csv$', full.names = TRUE)
 files <- flatten_chr(files_list)
 files
 ```
+
+Resumiendo todo en una sóla función:
 
 ```{r, warning=FALSE, message=FALSE}
 library(dplyr)
@@ -183,9 +258,9 @@ sales <- read_csv_folder('data/complex_data')
 sales
 ```
 
-## Versión con problemas
-
 ### Potenciales errores o fuentes de problemas
+
+Algunos posibles problemas son estos. La mayoría se solucionan utilizando la función `read_csv_folder`:
 
 1. No están instalados los paquetes del `tidyverse`
 2. Los archivos no tienen las mismas columnas
